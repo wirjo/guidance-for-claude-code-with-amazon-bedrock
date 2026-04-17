@@ -2,6 +2,7 @@
 # ABOUTME: Queries DynamoDB using single-partition schema for accurate time-based filtering
 
 import json
+import re
 import boto3
 import os
 import sys
@@ -17,8 +18,9 @@ from format_utils import format_number, format_percentage
 
 def get_model_display_name(model_id):
     """Convert model ID to display name."""
-    # Remove common prefixes
-    model_display = model_id.replace("us.anthropic.", "").replace("eu.anthropic.", "").replace("apac.anthropic.", "").replace("anthropic.", "")
+    # Remove CRIS region prefixes (us, eu, apac, au, jp, global) and vendor prefix
+    model_display = re.sub(r'^(us|eu|apac|au|jp|global)\.', '', model_id)
+    model_display = model_display.replace("anthropic.", "")
     
     # Detect model family and version
     model_lower = model_display.lower()
