@@ -48,6 +48,7 @@ class ClaudeModel:
     """A Claude model with its available inference profiles."""
     name: str
     base_model_id: str
+    cowork_aliases: tuple[str, ...]
     profiles: dict[str, InferenceProfile]
 
     def __getitem__(self, key: str):
@@ -70,7 +71,7 @@ class ClaudeModel:
 
     def keys(self):
         """Dict-like .keys() for backward compatibility."""
-        return ["name", "base_model_id", "profiles"]
+        return ["name", "base_model_id", "cowork_aliases", "profiles"]
 
     @property
     def available_profiles(self) -> list[str]:
@@ -93,6 +94,7 @@ def _build_model(data: dict) -> ClaudeModel:
     return ClaudeModel(
         name=data["name"],
         base_model_id=data["base_model_id"],
+        cowork_aliases=tuple(data.get("cowork_aliases", ())),
         profiles=profiles,
     )
 
@@ -105,6 +107,7 @@ _CLAUDE_MODELS_RAW = {
     "sonnet-4-6": {
         "name": "Claude Sonnet 4.6",
         "base_model_id": "anthropic.claude-sonnet-4-6",
+        "cowork_aliases": ["sonnet"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-sonnet-4-6",
@@ -156,6 +159,7 @@ _CLAUDE_MODELS_RAW = {
     "opus-4-7": {
         "name": "Claude Opus 4.7",
         "base_model_id": "anthropic.claude-opus-4-7",
+        "cowork_aliases": ["opus", "opusplan"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-opus-4-7",
@@ -258,6 +262,7 @@ _CLAUDE_MODELS_RAW = {
     "opus-4-6": {
         "name": "Claude Opus 4.6",
         "base_model_id": "anthropic.claude-opus-4-6-v1",
+        "cowork_aliases": ["opus", "opusplan"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-opus-4-6-v1",
@@ -394,6 +399,7 @@ _CLAUDE_MODELS_RAW = {
     "opus-4-5": {
         "name": "Claude Opus 4.5",
         "base_model_id": "anthropic.claude-opus-4-5-20251101-v1:0",
+        "cowork_aliases": ["opus", "opusplan"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-opus-4-5-20251101-v1:0",
@@ -433,6 +439,7 @@ _CLAUDE_MODELS_RAW = {
     "opus-4-1": {
         "name": "Claude Opus 4.1",
         "base_model_id": "anthropic.claude-opus-4-1-20250805-v1:0",
+        "cowork_aliases": ["opus", "opusplan"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-opus-4-1-20250805-v1:0",
@@ -445,6 +452,7 @@ _CLAUDE_MODELS_RAW = {
     "opus-4": {
         "name": "Claude Opus 4",
         "base_model_id": "anthropic.claude-opus-4-20250514-v1:0",
+        "cowork_aliases": ["opus", "opusplan"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-opus-4-20250514-v1:0",
@@ -465,6 +473,7 @@ _CLAUDE_MODELS_RAW = {
     "sonnet-4": {
         "name": "Claude Sonnet 4",
         "base_model_id": "anthropic.claude-sonnet-4-20250514-v1:0",
+        "cowork_aliases": ["sonnet"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-sonnet-4-20250514-v1:0",
@@ -572,6 +581,7 @@ _CLAUDE_MODELS_RAW = {
     "sonnet-4-5": {
         "name": "Claude Sonnet 4.5",
         "base_model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "cowork_aliases": ["sonnet"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -699,6 +709,7 @@ _CLAUDE_MODELS_RAW = {
     "sonnet-4-5-govcloud": {
         "name": "Claude Sonnet 4.5 (GovCloud)",
         "base_model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "cowork_aliases": ["sonnet"],
         "profiles": {
             "us-gov": {
                 "model_id": "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -711,6 +722,7 @@ _CLAUDE_MODELS_RAW = {
     "sonnet-3-7": {
         "name": "Claude 3.7 Sonnet",
         "base_model_id": "anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "cowork_aliases": ["sonnet"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
@@ -769,6 +781,7 @@ _CLAUDE_MODELS_RAW = {
     "haiku-4-5": {
         "name": "Claude Haiku 4.5",
         "base_model_id": "anthropic.claude-haiku-4-5-20251001-v1:0",
+        "cowork_aliases": ["haiku"],
         "profiles": {
             "us": {
                 "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -814,6 +827,7 @@ _CLAUDE_MODELS_RAW = {
     "sonnet-3-7-govcloud": {
         "name": "Claude 3.7 Sonnet (GovCloud)",
         "base_model_id": "anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "cowork_aliases": ["sonnet"],
         "profiles": {
             "us-gov": {
                 "model_id": "us-gov.anthropic.claude-3-7-sonnet-20250219-v1:0",
@@ -1261,3 +1275,73 @@ def resolve_model_for_tier(tier: str, cris_prefix: str) -> str | None:
                 if fallback in profiles:
                     return profiles[fallback]["model_id"]
     return None
+
+
+def get_cowork_inference_models(selected_model: str, cross_region_profile: str = None) -> list[str]:
+    """Get CoWork 3P inferenceModels list using full CRIS model IDs.
+
+    Returns an ordered list of CRIS model IDs available for the given
+    cross-region profile, with the selected model first. One model per
+    alias tier (opus, sonnet, haiku) to keep the list concise.
+
+    Args:
+        selected_model: Full CRIS model ID from profile.selected_model
+            (e.g., "us.anthropic.claude-opus-4-7")
+        cross_region_profile: Cross-region profile key (e.g., "us", "eu", "global").
+            If None, inferred from the selected model's profile.
+
+    Returns:
+        Ordered list of CRIS model IDs. Selected model first, then one
+        model per remaining tier available in the same profile.
+    """
+    # Find which profile key the selected model belongs to
+    selected_profile_key = cross_region_profile
+    selected_model_key = None
+
+    if not selected_profile_key:
+        for model_key, model_config in CLAUDE_MODELS.items():
+            for profile_key, profile_config in model_config["profiles"].items():
+                if profile_config["model_id"] == selected_model:
+                    selected_profile_key = profile_key
+                    selected_model_key = model_key
+                    break
+            if selected_profile_key:
+                break
+    else:
+        # Find the model key for the selected model
+        for model_key, model_config in CLAUDE_MODELS.items():
+            for _pk, profile_config in model_config["profiles"].items():
+                if profile_config["model_id"] == selected_model:
+                    selected_model_key = model_key
+                    break
+            if selected_model_key:
+                break
+
+    selected_profile_key = selected_profile_key or "us"
+
+    # Track which alias tiers we've covered
+    result = [selected_model]
+    seen_model_ids = {selected_model}
+    seen_alias_tiers = set()
+
+    # Mark the selected model's alias tiers as covered
+    if selected_model_key and selected_model_key in CLAUDE_MODELS:
+        for alias in CLAUDE_MODELS[selected_model_key].get("cowork_aliases", []):
+            seen_alias_tiers.add(alias)
+
+    # Add one model per uncovered alias tier (newest first = CLAUDE_MODELS order)
+    for _model_key, model_config in CLAUDE_MODELS.items():
+        aliases = model_config.get("cowork_aliases", [])
+        primary_alias = aliases[0] if aliases else None
+        # Skip if this model's primary alias tier is already covered
+        if primary_alias and primary_alias in seen_alias_tiers:
+            continue
+
+        profile_config = model_config["profiles"].get(selected_profile_key)
+        if profile_config and profile_config["model_id"] not in seen_model_ids:
+            result.append(profile_config["model_id"])
+            seen_model_ids.add(profile_config["model_id"])
+            for alias in aliases:
+                seen_alias_tiers.add(alias)
+
+    return result
