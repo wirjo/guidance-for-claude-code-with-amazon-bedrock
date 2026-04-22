@@ -149,10 +149,16 @@ class DeployCommand(Command):
                 else:
                     console.print("[yellow]CodeBuild is not enabled in your configuration.[/yellow]")
                     return 1
+            elif stack_arg == "monitoring-cowork":
+                if profile.monitoring_enabled:
+                    stacks_to_deploy.append(("monitoring-cowork", "CoWork Usage Dashboard"))
+                else:
+                    console.print("[yellow]Monitoring is not enabled in your configuration.[/yellow]")
+                    return 1
             else:
                 console.print(f"[red]Unknown stack: {stack_arg}[/red]")
                 console.print(
-                    "Valid stacks: auth, distribution, networking, monitoring, dashboard, analytics, quota, codebuild\n"
+                    "Valid stacks: auth, distribution, networking, monitoring, dashboard, analytics, quota, codebuild, monitoring-cowork\n"
                 )
                 console.print("[dim]Tip: Use 'ccwb deploy' without arguments to deploy all enabled stacks.[/dim]")
                 console.print("[dim]Use 'ccwb deploy quota' for quota-specific updates or late enablement.[/dim]")
@@ -880,6 +886,22 @@ class DeployCommand(Command):
                     template, stack_name, params, task_description="Deploying CodeBuild for Windows builds..."
                 )
 
+            elif stack_type == "monitoring-cowork":
+                template = project_root / "deployment" / "infrastructure" / "cowork-dashboard.yaml"
+                stack_name = profile.stack_names.get(
+                    "monitoring-cowork", f"{profile.identity_pool_name}-cowork-dashboard"
+                )
+                params = [
+                    f"DashboardName={profile.identity_pool_name}-CoworkDashboard",
+                    f"MetricsRegion={profile.aws_region}",
+                ]
+                return deploy_with_cf(
+                    template,
+                    stack_name,
+                    params,
+                    task_description="Deploying CoWork Usage Dashboard...",
+                )
+
             else:
                 console.print(f"[red]Unknown stack type: {stack_type}[/red]")
                 return 1
@@ -950,6 +972,21 @@ class DeployCommand(Command):
                 dashboard_url = dashboard_outputs.get("DashboardURL", "")
                 if dashboard_url:
                     console.print(f"• Dashboard URL: [cyan][link={dashboard_url}]{dashboard_url}[/link][/cyan]")
+
+            # Get CoWork dashboard stack outputs
+            cowork_dashboard_stack = profile.stack_names.get(
+                "monitoring-cowork", f"{profile.identity_pool_name}-cowork-dashboard"
+            )
+            cowork_outputs = get_stack_outputs(cowork_dashboard_stack, profile.aws_region)
+
+            if cowork_outputs:
+                console.print("\n[bold]CoWork Usage Dashboard:[/bold]")
+                cowork_url = cowork_outputs.get("DashboardURL", "")
+                if cowork_url:
+                    console.print(f"• Dashboard URL: [cyan][link={cowork_url}]{cowork_url}[/link][/cyan]")
+                events_lg = cowork_outputs.get("EventsLogGroupName", "")
+                if events_lg:
+                    console.print(f"• Events Log Group: [cyan]{events_lg}[/cyan]")
 
             # Get quota monitoring stack outputs if enabled
             if profile.quota_monitoring_enabled:

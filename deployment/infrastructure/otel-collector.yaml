@@ -441,6 +441,13 @@ Resources:
               - dimensions: [[decision, OTelLib]]
                 metric_name_selectors: ["claude_code.code_edit_tool.decision"]
 
+          # CoWork 3P events exporter (OTEL logs → CloudWatch Logs)
+          awscloudwatchlogs/cowork:
+            log_group_name: /aws/claude-cowork/events
+            log_stream_name: cowork-events
+            region: ${AWS::Region}
+            log_retention: 90
+
         service:
           extensions: [health_check]
           telemetry:
@@ -454,6 +461,10 @@ Resources:
               receivers: [otlp]
               processors: [attributes, resource, batch/metrics]
               exporters: [awsemf]
+            logs:
+              receivers: [otlp]
+              processors: [attributes, resource]
+              exporters: [awscloudwatchlogs/cowork]
 
   # ECS Task Definition
   TaskDefinition:

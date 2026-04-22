@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Claude Cowork usage dashboard - tracks CoWork 3P activity via OTEL events'
+
+Parameters:
+  DashboardName:
+    Type: String
+    Default: CoworkUsageDashboard
+    Description: Name for the CloudWatch dashboard
+
+  EventsLogGroup:
+    Type: String
+    Default: /aws/claude-cowork/events
+    Description: CloudWatch Log Group containing CoWork OTEL events
+
+  MetricsRegion:
+    Type: String
+    Default: ""
+    Description: Region where events log group exists (defaults to deploy region if empty)
+
+Conditions:
+  UseDefaultRegion: !Equals [!Ref MetricsRegion, ""]
+
+Resources:
+  # CloudWatch Log Group for CoWork events
+  CoworkEventsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref EventsLogGroup
+      RetentionInDays: 90
+
+  # CloudWatch Dashboard
+  CoworkDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Ref DashboardName
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "text",
+                "x": 0,
+                "y": 0,
+                "width": 24,
+                "height": 1,
+                "properties": {
+                  "markdown": "# Claude Cowork Usage Dashboard\nTracking Claude Desktop (CoWork 3P) activity via OpenTelemetry events. Data source: `${LogGroup}`"
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 1,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /user_prompt/ | stats count_distinct(attributes.user_email) as active_users by bin(24h)",
+                  "region": "${Region}",
+                  "title": "Active Users (24h)",
+                  "queryLanguage": "cwli",
+                  "view": "singleValue"
+                }
+              },
+              {
+                "type": "log",
+                "x": 6,
+                "y": 1,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /user_prompt/ | stats count(*) as prompts by bin(24h)",
+                  "region": "${Region}",
+                  "title": "Total Prompts (24h)",
+                  "queryLanguage": "cwli",
+                  "view": "singleValue"
+                }
+              },
+              {
+                "type": "log",
+                "x": 12,
+                "y": 1,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /api_request/ | parse @message /\"input_tokens\":(?<input>[0-9]+)/ | parse @message /\"output_tokens\":(?<output>[0-9]+)/ | stats sum(input + output) as total_tokens by bin(24h)",
+                  "region": "${Region}",
+                  "title": "Total Tokens (24h)",
+                  "queryLanguage": "cwli",
+                  "view": "singleValue"
+                }
+              },
+              {
+                "type": "log",
+                "x": 18,
+                "y": 1,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /error/ | filter @message like /\"error.type\"/ | stats count(*) as errors by bin(24h)",
+                  "region": "${Region}",
+                  "title": "Errors (24h)",
+                  "queryLanguage": "cwli",
+                  "view": "singleValue"
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 7,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /user_prompt/ | stats count(*) as prompts by bin(5m)",
+                  "region": "${Region}",
+                  "title": "Prompts Over Time",
+                  "queryLanguage": "cwli",
+                  "view": "timeSeries"
+                }
+              },
+              {
+                "type": "log",
+                "x": 12,
+                "y": 7,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /api_request/ | parse @message /\"model\":\"(?<model>[^\"]*)\"/  | parse @message /\"input_tokens\":(?<input>[0-9]+)/ | parse @message /\"output_tokens\":(?<output>[0-9]+)/ | stats sum(input + output) as tokens by model | sort tokens desc",
+                  "region": "${Region}",
+                  "title": "Token Usage by Model",
+                  "queryLanguage": "cwli",
+                  "view": "bar"
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 13,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /api_request/ | parse @message /\"user.email\":\"(?<user_email>[^\"]*)\"/  | parse @message /\"input_tokens\":(?<input>[0-9]+)/ | parse @message /\"output_tokens\":(?<output>[0-9]+)/ | stats sum(input + output) as tokens by user_email | sort tokens desc | limit 10",
+                  "region": "${Region}",
+                  "title": "Top Users by Token Consumption",
+                  "queryLanguage": "cwli",
+                  "view": "table"
+                }
+              },
+              {
+                "type": "log",
+                "x": 12,
+                "y": 13,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /tool_result/ | parse @message /\"tool_name\":\"(?<tool>[^\"]*)\"/  | stats count(*) as invocations by tool | sort invocations desc",
+                  "region": "${Region}",
+                  "title": "Tool Usage Breakdown",
+                  "queryLanguage": "cwli",
+                  "view": "bar"
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 19,
+                "width": 8,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /tool_result/ | parse @message /\"success\":\"(?<success>[^\"]*)\"/  | stats sum(success = 'true') as passed, sum(success = 'false') as failed, count(*) as total | fields (passed / total) * 100 as success_rate_pct",
+                  "region": "${Region}",
+                  "title": "Tool Success Rate (%)",
+                  "queryLanguage": "cwli",
+                  "view": "singleValue"
+                }
+              },
+              {
+                "type": "log",
+                "x": 8,
+                "y": 19,
+                "width": 8,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /api_request/ | parse @message /\"cache_read_tokens\":(?<cache_read>[0-9]+)/ | parse @message /\"input_tokens\":(?<input>[0-9]+)/ | stats sum(cache_read) as cached, sum(input) as total_input | fields (cached / (cached + total_input)) * 100 as cache_hit_pct",
+                  "region": "${Region}",
+                  "title": "Cache Hit Rate (%)",
+                  "queryLanguage": "cwli",
+                  "view": "singleValue"
+                }
+              },
+              {
+                "type": "log",
+                "x": 16,
+                "y": 19,
+                "width": 8,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /api_request/ | parse @message /\"duration_ms\":(?<duration>[0-9]+)/ | stats avg(duration) as avg_response_ms by bin(5m)",
+                  "region": "${Region}",
+                  "title": "Avg API Response Time (ms)",
+                  "queryLanguage": "cwli",
+                  "view": "timeSeries"
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 25,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /error/ | filter @message like /\"error.type\"/ | parse @message /\"error.type\":\"(?<error_type>[^\"]*)\"/  | stats count(*) as errors by bin(5m)",
+                  "region": "${Region}",
+                  "title": "API Errors Over Time",
+                  "queryLanguage": "cwli",
+                  "view": "timeSeries"
+                }
+              },
+              {
+                "type": "log",
+                "x": 12,
+                "y": 25,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${LogGroup}' | filter @message like /user_prompt/ | parse @message /\"event.timestamp\":\"(?<ts>[^\"]*)\"/  | parse @message /\"user.email\":\"(?<user_email>[^\"]*)\"/  | stats count(*) as prompts by datefloor(fromISO(ts), 1h) as hour | sort hour desc | limit 24",
+                  "region": "${Region}",
+                  "title": "Hourly Prompt Activity (Last 24h)",
+                  "queryLanguage": "cwli",
+                  "view": "bar"
+                }
+              }
+            ]
+          }
+        - LogGroup: !Ref EventsLogGroup
+          Region: !If [UseDefaultRegion, !Ref "AWS::Region", !Ref MetricsRegion]
+
+Outputs:
+  DashboardURL:
+    Description: URL for the CoWork Usage Dashboard
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${DashboardName}"
+
+  EventsLogGroupName:
+    Description: CloudWatch Log Group for CoWork OTEL events
+    Value: !Ref EventsLogGroup
+
+  EventsLogGroupArn:
+    Description: ARN of the CoWork events log group
+    Value: !GetAtt CoworkEventsLogGroup.Arn
