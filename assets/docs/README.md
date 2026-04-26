@@ -42,6 +42,14 @@ This folder contains documentation for users implementing and operating Claude C
 - **Purpose**: Setup and usage of the analytics pipeline for tracking Claude Code metrics
 - **Audience**: IT administrators managing usage analytics
 
+## Security
+
+### Security Baseline
+
+- **File**: [SECURITY_BASELINE.md](./SECURITY_BASELINE.md)
+- **Purpose**: Generate and deploy managed-settings.json security policies for Claude Code
+- **Audience**: IT administrators and security teams
+
 ## Claude Cowork (Desktop)
 
 ### CoWork 3P Guide

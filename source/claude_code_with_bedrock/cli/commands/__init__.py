@@ -9,6 +9,7 @@ from .deploy import DeployCommand
 from .destroy import DestroyCommand
 from .init import InitCommand
 from .package import PackageCommand
+from .security import SecurityGenerateCommand
 from .status import StatusCommand
 from .test import TestCommand
 
@@ -21,4 +22,5 @@ __all__ = [
     "BuildsCommand",
     "DestroyCommand",
     "CoworkGenerateCommand",
+    "SecurityGenerateCommand",
 ]
