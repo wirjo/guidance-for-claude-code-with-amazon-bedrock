@@ -238,8 +238,12 @@ class PackageCommand(Command):
                         else:
                             platforms_to_build.append("macos-intel")
 
-                        docker_check = subprocess.run(["docker", "--version"], capture_output=True)
-                        if docker_check.returncode == 0:
+                        try:
+                            docker_check = subprocess.run(["docker", "--version"], capture_output=True)
+                            docker_available = docker_check.returncode == 0
+                        except FileNotFoundError:
+                            docker_available = False
+                        if docker_available:
                             platforms_to_build.append("linux-x64")
                             platforms_to_build.append("linux-arm64")
                     elif current_os == "linux":
@@ -278,8 +282,12 @@ class PackageCommand(Command):
                     platforms_to_build.append("macos-intel")
 
                 # Check if Docker is available for Linux builds
-                docker_check = subprocess.run(["docker", "--version"], capture_output=True)
-                if docker_check.returncode == 0:
+                try:
+                    docker_check = subprocess.run(["docker", "--version"], capture_output=True)
+                    docker_available = docker_check.returncode == 0
+                except FileNotFoundError:
+                    docker_available = False
+                if docker_available:
                     platforms_to_build.append("linux-x64")
                     platforms_to_build.append("linux-arm64")
 
@@ -363,6 +371,11 @@ class PackageCommand(Command):
         console.print("[cyan]Creating Claude Code settings...[/cyan]")
         self._create_claude_settings(output_dir, profile, include_coauthored_by, profile_name)
 
+        # Generate CoWork 3P MDM configuration if enabled
+        if profile.cowork_3p_enabled:
+            console.print("\n[cyan]Generating CoWork 3P MDM configuration...[/cyan]")
+            self._generate_cowork_3p_mdm_config(output_dir, profile, profile_name)
+
         # Summary
         console.print("\n[green]✓ Package created successfully![/green]")
         console.print(f"\nOutput directory: [cyan]{output_dir}[/cyan]")
@@ -383,6 +396,13 @@ class PackageCommand(Command):
             console.print("  • claude-settings/settings.json - Claude Code telemetry settings")
             for platform_name, otel_helper_path in built_otel_helpers:
                 console.print(f"  • {otel_helper_path.name} - OTEL helper executable for {platform_name}")
+        if profile.cowork_3p_enabled:
+            if (output_dir / "cowork-3p-config.json").exists():
+                console.print("  • cowork-3p-config.json - CoWork 3P MDM configuration (JSON)")
+            if (output_dir / "cowork-3p.mobileconfig").exists():
+                console.print("  • cowork-3p.mobileconfig - CoWork 3P MDM profile (macOS)")
+            if (output_dir / "cowork-3p.reg").exists():
+                console.print("  • cowork-3p.reg - CoWork 3P registry file (Windows)")
 
         # Next steps
         console.print("\n[bold]Distribution steps:[/bold]")
@@ -883,8 +903,12 @@ class PackageCommand(Command):
             binary_name = "credential-process-linux-x64"
 
         # Check if Docker is available and running
-        docker_check = subprocess.run(["docker", "--version"], capture_output=True)
-        if docker_check.returncode != 0:
+        try:
+            docker_check = subprocess.run(["docker", "--version"], capture_output=True)
+            docker_installed = docker_check.returncode == 0
+        except FileNotFoundError:
+            docker_installed = False
+        if not docker_installed:
             console.print(f"\n[yellow]⚠️  Docker not found - skipping Linux {arch} build[/yellow]")
             console.print("[dim]Linux binaries require Docker Desktop to be installed and running.[/dim]")
             console.print("[dim]Install Docker: https://docs.docker.com/get-docker/[/dim]")
@@ -1077,8 +1101,12 @@ RUN pyinstaller \
             binary_name = "otel-helper-linux-x64"
 
         # Check if Docker is available and running
-        docker_check = subprocess.run(["docker", "--version"], capture_output=True)
-        if docker_check.returncode != 0:
+        try:
+            docker_check = subprocess.run(["docker", "--version"], capture_output=True)
+            docker_installed = docker_check.returncode == 0
+        except FileNotFoundError:
+            docker_installed = False
+        if not docker_installed:
             console.print(f"\n[yellow]⚠️  Docker not found - skipping Linux {arch} OTEL helper build[/yellow]")
             console.print("[dim]Linux binaries require Docker Desktop to be installed and running.[/dim]")
             console.print(f"[dim]Skipping otel-helper-linux-{arch}[/dim]\n")
@@ -1731,6 +1759,12 @@ RUN pyinstaller \
                 console.print("[dim]  AZURE_CLIENT_CERTIFICATE_PATH=<path/to/cert.pem>[/dim]")
                 console.print("[dim]  AZURE_CLIENT_CERTIFICATE_KEY_PATH=<path/to/key.pem>[/dim]\n")
 
+        # Add quota settings so the credential provider can enforce limits
+        if getattr(profile, "quota_api_endpoint", None):
+            config[profile_name]["quota_api_endpoint"] = profile.quota_api_endpoint
+            config[profile_name]["quota_fail_mode"] = getattr(profile, "quota_fail_mode", "open")
+            config[profile_name]["quota_check_interval"] = getattr(profile, "quota_check_interval", 30)
+
         config_path = output_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
@@ -1801,10 +1835,10 @@ echo
 # Check prerequisites
 echo "Checking prerequisites..."
 
-if ! command -v aws &> /dev/null; then
-    echo "❌ AWS CLI is not installed"
-    echo "   Please install from https://aws.amazon.com/cli/"
-    exit 1
+if command -v aws &> /dev/null; then
+    echo "✓ AWS CLI found (optional)"
+else
+    echo "ℹ  AWS CLI not found — not required. The credential process binary handles authentication directly."
 fi
 
 echo "✓ Prerequisites found"
@@ -2016,6 +2050,7 @@ echo
         """Create Windows batch installer script."""
 
         installer_content = f"""@echo off
+SETLOCAL ENABLEDELAYEDEXPANSION
 REM Claude Code Authentication Installer for Windows
 REM Organization: {profile.provider_domain}
 REM Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -2032,10 +2067,9 @@ echo Checking prerequisites...
 
 where aws >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: AWS CLI is not installed
-    echo        Please install from https://aws.amazon.com/cli/
-    pause
-    exit /b 1
+    echo INFO: AWS CLI not found -- not required. The credential process binary handles authentication directly.
+) else (
+    echo OK AWS CLI found [optional]
 )
 
 echo OK Prerequisites found
@@ -2083,15 +2117,7 @@ if exist "claude-settings" (
 
         if not "%SKIP_SETTINGS%"=="true" (
             REM Use PowerShell to replace placeholders
-            powershell -Command ^
-            "$otelPath = '%USERPROFILE%\\\\claude-code-with-bedrock\\\\otel-helper.exe' ^
-            -replace '\\\\\\\\', '/'; ^
-            $credPath = '%USERPROFILE%\\\\claude-code-with-bedrock\\\\credential-process.exe' ^
-            -replace '\\\\\\\\', '/'; ^
-            (Get-Content 'claude-settings\\\\settings.json') ^
-            -replace '__OTEL_HELPER_PATH__', $otelPath ^
-            -replace '__CREDENTIAL_PROCESS_PATH__', $credPath | ^
-            Set-Content '%USERPROFILE%\\\\.claude\\\\settings.json'"
+            powershell -Command "$otelPath = $env:USERPROFILE + '\\claude-code-with-bedrock\\otel-helper.exe' -replace '\\\\', '/'; $credPath = $env:USERPROFILE + '\\claude-code-with-bedrock\\credential-process.exe' -replace '\\\\', '/'; (Get-Content 'claude-settings\\settings.json') -replace '__OTEL_HELPER_PATH__', $otelPath -replace '__CREDENTIAL_PROCESS_PATH__', $credPath | Set-Content (Join-Path $env:USERPROFILE '.claude\\settings.json')"
             echo OK Claude Code settings configured
         )
     )
@@ -2102,18 +2128,15 @@ echo.
 echo Configuring AWS profiles...
 
 REM Read profiles from config.json using PowerShell
-for /f %%p in ('powershell -Command ^
-"& {{$c=Get-Content config.json|ConvertFrom-Json;$c.PSObject.Properties.Name}}"') do (
+for /f %%p in ('powershell -NoProfile -Command "$c=Get-Content config.json|ConvertFrom-Json;$c.PSObject.Properties.Name"') do (
     echo Configuring AWS profile: %%p
 
     REM Get profile-specific region
-    for /f %%r in ('powershell -Command ^
-    "& {{$c=Get-Content config.json|ConvertFrom-Json;$c.'%%p'.aws_region}}"') do set PROFILE_REGION=%%r
+    for /f %%r in ('powershell -NoProfile -Command "$c=Get-Content config.json|ConvertFrom-Json;$c.'"'"'%%p'"'"'.aws_region"') do set PROFILE_REGION=%%r
 
 
     REM Set credential process with --profile flag (cross-platform, no wrapper needed)
-    aws configure set credential_process ^
-    "%USERPROFILE%\\claude-code-with-bedrock\\credential-process.exe --profile %%p" --profile %%p
+    aws configure set credential_process "%USERPROFILE%\\claude-code-with-bedrock\\credential-process.exe --profile %%p" --profile %%p
 
 
     REM Set region
@@ -2132,8 +2155,7 @@ echo Installation complete!
 echo ======================================
 echo.
 echo Available profiles:
-for /f %%p in ('powershell -Command ^
-"$config = Get-Content config.json | ConvertFrom-Json; $config.PSObject.Properties.Name"') do (
+for /f %%p in ('powershell -NoProfile -Command "(Get-Content config.json | ConvertFrom-Json).PSObject.Properties.Name"') do (
     echo   - %%p
 )
 echo.
@@ -2142,8 +2164,7 @@ echo   set AWS_PROFILE=^<profile-name^>
 echo   aws sts get-caller-identity
 echo.
 echo Example:
-for /f %%p in ('powershell -Command ^
-"$config = Get-Content config.json | ConvertFrom-Json; $config.PSObject.Properties.Name | Select-Object -First 1"') do (
+for /f %%p in ('powershell -NoProfile -Command "(Get-Content config.json | ConvertFrom-Json).PSObject.Properties.Name | Select-Object -First 1"') do (
     echo   set AWS_PROFILE=%%p
     echo   aws sts get-caller-identity
 )
@@ -2346,6 +2367,11 @@ Available metrics include:
                     "CLAUDE_CODE_USE_BEDROCK": "1",
                     # AWS_PROFILE is used by both AWS SDK and otel-helper
                     "AWS_PROFILE": profile_name,
+                    # AWS_CREDENTIAL_PROCESS allows the AWS SDK to obtain credentials
+                    # directly without requiring the AWS CLI or ~/.aws/config.
+                    # The __CREDENTIAL_PROCESS_PATH__ placeholder is replaced by
+                    # install.sh/install.bat with the actual binary path at install time.
+                    "AWS_CREDENTIAL_PROCESS": f"__CREDENTIAL_PROCESS_PATH__ --profile {profile_name}",
                 }
             }
 
@@ -2360,14 +2386,19 @@ Available metrics include:
 
             # Add selected model as environment variable if available
             if hasattr(profile, "selected_model") and profile.selected_model:
-                settings["env"]["ANTHROPIC_MODEL"] = profile.selected_model
+                from claude_code_with_bedrock.models import get_claude_code_alias, resolve_model_for_tier
+
+                # Use a Claude Code alias (sonnet/opus/opusplan/haiku) so ANTHROPIC_MODEL
+                # feeds through the DEFAULT_*_MODEL resolution chain for CRIS-aware routing.
+                # model_alias is set during ccwb init (e.g. opus vs opusplan for Opus models).
+                alias = getattr(profile, "model_alias", None) or get_claude_code_alias(profile.selected_model)
+                settings["env"]["ANTHROPIC_MODEL"] = alias or profile.selected_model
 
                 # Set all model tier env vars using the CRIS prefix from init.
                 # Claude Code uses these to resolve the correct CRIS-prefixed
                 # models for each tier (small/fast, default sonnet/opus/haiku).
                 # This ensures all tiers respect the admin's routing geography
                 # choice and works correctly with model aliases like 'opusplan'.
-                from claude_code_with_bedrock.models import resolve_model_for_tier
                 cris_prefix = getattr(profile, "cross_region_profile", None) or "us"
 
                 haiku_model = resolve_model_for_tier("haiku", cris_prefix)
@@ -2449,3 +2480,42 @@ Available metrics include:
 
         except Exception as e:
             console.print(f"[yellow]Warning: Could not create Claude Code settings: {e}[/yellow]")
+
+
+    def _generate_cowork_3p_mdm_config(
+        self,
+        output_dir: Path,
+        profile,
+        profile_name: str = "ClaudeCode",
+    ) -> None:
+        """Generate Claude Cowork 3P MDM configuration files.
+
+        Delegates to shared utilities in cli/utils/cowork_3p.py to ensure
+        consistency with the standalone 'ccwb cowork generate' command.
+        """
+        from claude_code_with_bedrock.cli.utils.cowork_3p import (
+            add_monitoring_config,
+            build_mdm_config,
+            derive_model_aliases,
+            generate_all,
+            generate_credential_helper_wrapper,
+        )
+
+        console = Console()
+
+        try:
+            bedrock_region = self._get_bedrock_region_for_profile(profile)
+            model_aliases = derive_model_aliases()
+
+            mdm_config = build_mdm_config(
+                bedrock_region=bedrock_region,
+                model_aliases=model_aliases,
+                profile_name=profile_name,
+            )
+
+            generate_credential_helper_wrapper(profile_name, bedrock_region)
+            add_monitoring_config(mdm_config, profile, console)
+            generate_all(output_dir, mdm_config, console)
+
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not generate CoWork 3P config: {e}[/yellow]")

@@ -32,6 +32,7 @@ class Profile:
     allowed_bedrock_regions: list[str] = field(default_factory=list)
     cross_region_profile: str | None = None  # Cross-region profile: "us", "europe", "apac"
     selected_model: str | None = None  # Selected Claude model ID (e.g., "us.anthropic.claude-3-7-sonnet-20250805-v1:0")
+    model_alias: str | None = None  # Claude Code alias for ANTHROPIC_MODEL: "sonnet", "opus", "opusplan", "haiku"
     selected_source_region: str | None = None  # User-selected source region for AWS config and Claude Code settings
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -69,6 +70,7 @@ class Profile:
     federation_type: str = "cognito"  # "cognito" or "direct"
     federated_role_arn: str | None = None  # ARN for Direct STS federation
     max_session_duration: int = 28800  # 8 hours default, 43200 (12 hours) for Direct STS
+    sso_enabled: bool = True  # Enable SSO authentication (Okta, Auth0, Azure, Cognito)
 
     # Confidential client authentication (Azure AD / Entra ID)
     # If neither is set, public client flow is used (current default).
@@ -83,6 +85,9 @@ class Profile:
 
     # Claude Code settings configuration
     include_coauthored_by: bool = True  # Whether to include "co-authored-by Claude" in git commits
+
+    # Claude Cowork 3P MDM configuration
+    cowork_3p_enabled: bool = True  # Generate CoWork 3P MDM configs during packaging
 
     # Legacy field support
     @property

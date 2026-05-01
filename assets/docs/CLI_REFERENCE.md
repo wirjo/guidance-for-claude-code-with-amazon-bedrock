@@ -28,6 +28,8 @@ This document provides a complete reference for all `ccwb` (Claude Code with Bed
     - [`quota unblock` - Unblock User](#quota-unblock---unblock-user)
     - [`quota export` - Export Policies](#quota-export---export-policies)
     - [`quota import` - Import Policies](#quota-import---import-policies)
+  - [Claude Cowork 3P](#claude-cowork-3p)
+    - [`cowork generate` - Generate MDM Configuration](#cowork-generate---generate-mdm-configuration)
   - [Profile Management](#profile-management)
     - [`context list` - List All Profiles](#context-list---list-all-profiles)
     - [`context current` - Show Active Profile](#context-current---show-active-profile)
@@ -264,10 +266,12 @@ poetry run ccwb package [options]
   - ARM64: Native build on Apple Silicon Macs (works on all Macs)
   - Intel: **Optional** - requires x86_64 Python environment on ARM Macs
   - Universal: Requires both architectures' Python libraries (not currently automated)
-- **Linux**: Uses PyInstaller in Docker containers
+- **Linux**: Uses PyInstaller in Docker containers (cross-compiled from macOS host)
   - x64: Uses linux/amd64 Docker platform
   - ARM64: Uses linux/arm64 Docker platform
   - Docker Desktop handles architecture emulation automatically
+  - **Requires Docker Desktop to be installed and running** — see Graceful Fallback Behavior below
+  - Not required for macOS or Windows builds
 - **Windows**: Uses Nuitka via AWS CodeBuild (if enabled during init)
   - Automated builds take 12-15 minutes
   - Requires CodeBuild to be enabled during `init`
@@ -296,7 +300,7 @@ arch -x86_64 ~/venv-x86/bin/pip install pyinstaller boto3 keyring
 - For `--target-platform=all`: Skips Intel builds with a note, builds all other platforms
 - For `--target-platform=macos-intel`: Shows instructions for optional setup, skips the build
 - The package process continues successfully without Intel binaries
-- ARM64 binaries can be distributed to all Mac users (Intel and Apple Silicon)
+- Intel (`macos-intel`) binaries can be distributed to all Mac users — they run natively on Intel Macs and via Rosetta on Apple Silicon. ARM64 binaries only run on Apple Silicon and cannot run on Intel Macs.
 
 **Graceful Fallback Behavior:**
 
@@ -304,7 +308,10 @@ The package command is designed to handle missing optional components gracefully
 
 - **Intel Mac builds**: Skipped if x86_64 Python environment is not available on ARM Macs
 - **Windows builds**: Skipped if CodeBuild was not enabled during `init`
-- **Linux builds**: Skipped if Docker is not available
+- **Linux builds (from macOS)**: Skipped with a warning in two cases:
+  - Docker is not installed (`docker` binary not found in `$PATH`) — install Docker Desktop from https://docs.docker.com/get-docker/
+  - Docker is installed but the daemon is not running — open Docker Desktop and wait for it to start, then retry
+  - macOS and Windows builds are **unaffected** by Docker availability
 - **At least one platform must build successfully** for the package command to succeed
 
 This ensures that packaging always works, even if some optional platforms are not available.
@@ -584,6 +591,60 @@ poetry run ccwb cleanup [options]
 - Clean up after testing
 - Remove failed installations
 - Start fresh with a new configuration
+
+## Claude Cowork 3P
+
+### `cowork generate` - Generate MDM Configuration
+
+Generate Claude Cowork 3P MDM configuration files for deploying Claude Desktop with Amazon Bedrock as the inference backend.
+
+This command reads your existing deployment profile (region, model, monitoring stack) and generates ready-to-deploy MDM configuration files.
+
+```bash
+# Generate all formats (JSON, macOS .mobileconfig, Windows .reg)
+poetry run ccwb cowork generate
+
+# Generate specific format
+poetry run ccwb cowork generate --format mobileconfig
+poetry run ccwb cowork generate --format reg
+poetry run ccwb cowork generate --format json
+
+# Custom model aliases
+poetry run ccwb cowork generate --models opus,sonnet,haiku
+
+# Custom output directory
+poetry run ccwb cowork generate -o ./my-mdm-configs/
+
+# Specific profile
+poetry run ccwb cowork generate --profile Production
+
+# Custom credential helper TTL
+poetry run ccwb cowork generate --credential-helper-ttl 7200
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--profile` | Configuration profile to use | Active profile |
+| `--output`, `-o` | Output directory | `dist/cowork-3p/` |
+| `--format`, `-f` | Output format: `all`, `json`, `mobileconfig`, `reg` | `all` |
+| `--models`, `-m` | Comma-separated model aliases | Auto-detected from profile |
+| `--credential-helper-ttl` | Credential helper cache TTL (seconds) | `3600` |
+
+**Generated files:**
+
+| File | Platform | Description |
+|------|----------|-------------|
+| `cowork-3p-config.json` | All | Raw MDM configuration JSON (for Claude Desktop Setup UI import) |
+| `cowork-3p.mobileconfig` | macOS | MDM configuration profile (deploy via Jamf, Kandji, Mosyle) |
+| `cowork-3p.reg` | Windows | Registry file (deploy via Group Policy, Intune, SCCM) |
+
+**Automatic integration with `ccwb package`:**
+
+CoWork 3P configs are also auto-generated during `ccwb package` when enabled via `ccwb init`. Both paths use the same shared configuration logic to ensure identical output.
+
+See [CoWork 3P Guide](COWORK_3P.md) for detailed setup and deployment instructions.
 
 ## Quota Management
 
