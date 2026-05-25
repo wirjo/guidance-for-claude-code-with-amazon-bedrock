@@ -23,6 +23,7 @@ class Profile:
     schema_version: str = "2.0"  # Configuration schema version
     stack_names: dict[str, str] = field(default_factory=dict)
     monitoring_enabled: bool = True
+    monitoring_mode: str = "sidecar"  # "sidecar" (local collector) or "central" (ECS Fargate)
     monitoring_config: dict[str, Any] = field(default_factory=dict)
     analytics_enabled: bool = True  # Analytics pipeline for user metrics
     metrics_log_group: str = "/aws/claude-code/metrics"
@@ -32,11 +33,21 @@ class Profile:
     allowed_bedrock_regions: list[str] = field(default_factory=list)
     cross_region_profile: str | None = None  # Cross-region profile: "us", "europe", "apac"
     selected_model: str | None = None  # Selected Claude model ID (e.g., "us.anthropic.claude-3-7-sonnet-20250805-v1:0")
+    model_alias: str | None = None  # Claude Code alias for ANTHROPIC_MODEL: "sonnet", "opus", "opusplan", "haiku"
     selected_source_region: str | None = None  # User-selected source region for AWS config and Claude Code settings
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    provider_type: str | None = None  # Auto-detected: "okta", "auth0", "azure", "cognito"
+    provider_type: str | None = None  # Auto-detected: "okta", "auth0", "azure", "cognito", "generic"
     cognito_user_pool_id: str | None = None  # Only for Cognito User Pool providers
+
+    # Generic OIDC provider configuration (provider_type == "generic")
+    # Required when the IdP isn't Okta/Auth0/Azure/Cognito (e.g. PingFederate, Keycloak, ForgeRock).
+    # When set, these override the hardcoded paths in PROVIDER_CONFIGS.
+    oidc_issuer_url: str | None = None  # e.g. https://auth.example.com (no trailing slash)
+    oidc_authorization_endpoint: str | None = None  # Full URL or path appended to issuer
+    oidc_token_endpoint: str | None = None  # Full URL or path appended to issuer
+    oidc_jwks_uri: str | None = None  # Full URL to JWKS endpoint
+    oidc_thumbprint: str | None = None  # SHA-1 thumbprint of root cert in JWKS TLS chain
     enable_codebuild: bool = False  # Enable CodeBuild for Windows binary builds
     enable_distribution: bool = False  # Enable package distribution features (legacy, use distribution_type)
 
@@ -69,6 +80,7 @@ class Profile:
     federation_type: str = "cognito"  # "cognito" or "direct"
     federated_role_arn: str | None = None  # ARN for Direct STS federation
     max_session_duration: int = 28800  # 8 hours default, 43200 (12 hours) for Direct STS
+    sso_enabled: bool = True  # Enable SSO authentication (Okta, Auth0, Azure, Cognito)
 
     # Confidential client authentication (Azure AD / Entra ID)
     # If neither is set, public client flow is used (current default).
@@ -81,8 +93,21 @@ class Profile:
     client_certificate_path: str | None = None  # Path to PEM certificate file
     client_certificate_key_path: str | None = None  # Path to PEM private key file
 
+    # OAuth callback port (also used for inter-process locking)
+    redirect_port: int | None = None  # OAuth callback port (default 8400); must match IdP registered redirect URI
+
+    # Resource tagging
+    tags: dict[str, str] = field(default_factory=dict)  # Tags applied to all deployed CloudFormation stacks
+    # Application Inference Profile support (per-tier ARNs)
+    inference_profile_opus_arn: str | None = None  # Optional inference profile ARN for Opus tier
+    inference_profile_sonnet_arn: str | None = None  # Optional inference profile ARN for Sonnet tier
+    inference_profile_haiku_arn: str | None = None  # Optional inference profile ARN for Haiku tier
+
     # Claude Code settings configuration
     include_coauthored_by: bool = True  # Whether to include "co-authored-by Claude" in git commits
+
+    # Claude Cowork 3P MDM configuration
+    cowork_3p_enabled: bool = True  # Generate CoWork 3P MDM configs during packaging
 
     # Legacy field support
     @property
@@ -165,6 +190,12 @@ class Profile:
                 regions = data["allowed_bedrock_regions"]
                 if any(r.startswith("us-") for r in regions):
                     data["cross_region_profile"] = "us"
+
+        # Filter out any keys not in the Profile dataclass to prevent TypeError
+        import dataclasses
+
+        valid_fields = {f.name for f in dataclasses.fields(cls)}
+        data = {k: v for k, v in data.items() if k in valid_fields}
 
         return cls(**data)
 
