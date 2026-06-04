@@ -20,6 +20,15 @@ POLICIES_TABLE = os.environ.get("POLICIES_TABLE", "QuotaPolicies")
 MISSING_EMAIL_ENFORCEMENT = os.environ.get("MISSING_EMAIL_ENFORCEMENT", "block")
 ERROR_HANDLING_MODE = os.environ.get("ERROR_HANDLING_MODE", "fail_closed")
 
+# Default limits from environment (used when fine-grained quotas are disabled)
+ENABLE_FINEGRAINED_QUOTAS = os.environ.get("ENABLE_FINEGRAINED_QUOTAS", "false").lower() == "true"
+MONTHLY_TOKEN_LIMIT = int(os.environ.get("MONTHLY_TOKEN_LIMIT", "0"))
+DAILY_TOKEN_LIMIT = int(os.environ.get("DAILY_TOKEN_LIMIT", "0"))
+MONTHLY_ENFORCEMENT_MODE = os.environ.get("MONTHLY_ENFORCEMENT_MODE", "block")
+DAILY_ENFORCEMENT_MODE = os.environ.get("DAILY_ENFORCEMENT_MODE", "alert")
+WARNING_THRESHOLD_80 = int(os.environ.get("WARNING_THRESHOLD_80", "240000000"))
+WARNING_THRESHOLD_90 = int(os.environ.get("WARNING_THRESHOLD_90", "270000000"))
+
 # DynamoDB tables
 quota_table = dynamodb.Table(QUOTA_TABLE)
 policies_table = dynamodb.Table(POLICIES_TABLE)
@@ -145,18 +154,20 @@ def lambda_handler(event, context):
 
         # Check daily token limit (if configured)
         if daily_limit and daily_limit > 0 and daily_tokens >= daily_limit:
-            return build_response(200, {
-                "allowed": False,
-                "reason": "daily_exceeded",
-                "enforcement_mode": enforcement_mode,
-                "usage": usage_summary,
-                "policy": {
-                    "type": policy.get("policy_type"),
-                    "identifier": policy.get("identifier")
-                },
-                "unblock_status": {"is_unblocked": False},
-                "message": f"Daily quota exceeded: {int(daily_tokens):,} / {int(daily_limit):,} tokens ({daily_tokens/daily_limit*100:.1f}%). Quota resets at UTC midnight."
-            })
+            daily_mode = policy.get("daily_enforcement_mode", "alert")
+            if daily_mode == "block":
+                return build_response(200, {
+                    "allowed": False,
+                    "reason": "daily_exceeded",
+                    "enforcement_mode": enforcement_mode,
+                    "usage": usage_summary,
+                    "policy": {
+                        "type": policy.get("policy_type"),
+                        "identifier": policy.get("identifier")
+                    },
+                    "unblock_status": {"is_unblocked": False},
+                    "message": f"Daily quota exceeded: {int(daily_tokens):,} / {int(daily_limit):,} tokens ({daily_tokens/daily_limit*100:.1f}%). Quota resets at UTC midnight."
+                })
 
         # All checks passed - access allowed
         return build_response(200, {
@@ -255,6 +266,20 @@ def resolve_quota_for_user(email: str, groups: list) -> dict | None:
     Returns:
         Policy dict or None if no policy applies (unlimited).
     """
+    if not ENABLE_FINEGRAINED_QUOTAS and MONTHLY_TOKEN_LIMIT > 0:
+        # Return default limits from environment
+        return {
+            "policy_type": "default",
+            "identifier": "environment",
+            "monthly_token_limit": MONTHLY_TOKEN_LIMIT,
+            "daily_token_limit": DAILY_TOKEN_LIMIT if DAILY_TOKEN_LIMIT > 0 else None,
+            "warning_threshold_80": WARNING_THRESHOLD_80,
+            "warning_threshold_90": WARNING_THRESHOLD_90,
+            "enforcement_mode": MONTHLY_ENFORCEMENT_MODE,
+            "daily_enforcement_mode": DAILY_ENFORCEMENT_MODE,
+            "enabled": True,
+        }
+
     # 1. Check for user-specific policy
     user_policy = get_policy("user", email)
     if user_policy and user_policy.get("enabled", True):
@@ -300,6 +325,7 @@ def get_policy(policy_type: str, identifier: str) -> dict | None:
             "warning_threshold_80": int(item.get("warning_threshold_80", 0)),
             "warning_threshold_90": int(item.get("warning_threshold_90", 0)),
             "enforcement_mode": item.get("enforcement_mode", "alert"),
+            "daily_enforcement_mode": item.get("daily_enforcement_mode", "alert"),
             "enabled": item.get("enabled", True),
         }
     except Exception as e:

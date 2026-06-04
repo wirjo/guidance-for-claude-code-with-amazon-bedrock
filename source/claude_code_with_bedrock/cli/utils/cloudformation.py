@@ -108,6 +108,19 @@ class CloudFormationManager:
             # Read template
             template_body = self._read_template(template_path)
 
+            # CloudFormation's CreateStack/UpdateStack APIs cap TemplateBody at
+            # 51,200 bytes. Templates larger than that must be uploaded to S3
+            # and referenced via TemplateURL (1 MB cap). Fail fast here with a
+            # clear message so the user can trim the template rather than
+            # sitting through a partial deploy that rolls back.
+            template_bytes = len(template_body.encode("utf-8"))
+            if template_bytes > 51200:
+                raise CloudFormationError(
+                    f"Template {template_path} is {template_bytes} bytes, which exceeds the "
+                    f"CloudFormation inline TemplateBody limit of 51,200 bytes. "
+                    f"Trim the template (or open a PR to add TemplateURL/S3 upload support)."
+                )
+
             # Check if stack exists
             exists, current_status = self._check_stack_exists(stack_name)
 
@@ -299,7 +312,7 @@ class CloudFormationManager:
         template_path = Path(template_path)
 
         # Read template
-        with open(template_path) as f:
+        with open(template_path, encoding="utf-8") as f:
             template_body = f.read()
 
         # Parse template using cfn-flip for CloudFormation compatibility
@@ -454,7 +467,7 @@ class CloudFormationManager:
     def _read_template(self, template_path: str | Path) -> str:
         """Read and return template content."""
         template_path = Path(template_path)
-        with open(template_path) as f:
+        with open(template_path, encoding="utf-8") as f:
             content = f.read()
         return content
 
