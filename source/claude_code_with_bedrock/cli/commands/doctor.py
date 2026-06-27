@@ -241,7 +241,8 @@ def run_doctor(home: Path = None):
                     "Dynamic config mode (bootstrap) but otel_collector_endpoint in config.json "
                     "(proxy will spawn unnecessarily)"
                 )
-            check.pass_("Bootstrap server delivers telemetry (no local proxy needed)")
+            if not mon_issues:
+                check.pass_("Bootstrap server delivers telemetry (no local proxy needed)")
         elif has_endpoint and monitoring_mode:
             # Static mode with monitoring — proxy should be present
             if monitoring_mode == "sidecar":
