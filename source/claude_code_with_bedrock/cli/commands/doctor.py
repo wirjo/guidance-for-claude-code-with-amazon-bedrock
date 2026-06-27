@@ -175,6 +175,114 @@ def run_doctor(home: Path = None):
         check.message = "Config not available"
     checks.append(check)
 
+    # ─── Architecture Awareness: validate components match detected config ─────
+    # Infer expected architecture from config.json and validate settings match
+    if config_data and found_settings:
+        try:
+            settings = json.loads(found_settings.read_text())
+        except Exception:
+            settings = {}
+
+        profiles_data = config_data.get("profiles", config_data)
+        first_profile_data = next(
+            (v for k, v in profiles_data.items() if isinstance(v, dict)), {}
+        )
+
+        auth_type = first_profile_data.get("auth_type", "oidc")
+        monitoring_mode = first_profile_data.get("monitoring_mode", None)
+        has_endpoint = bool(first_profile_data.get("otel_collector_endpoint"))
+        config_mode = first_profile_data.get("config_mode", "static")
+        hooks = settings.get("hooks", {})
+        env = settings.get("env", {})
+
+        # ─── Auth flow validation ─────────────────────────────────────────────
+        check = HealthCheck("auth-flow", "Settings match expected auth flow")
+        issues = []
+
+        if auth_type == "idc":
+            # IDC requires: awsCredentialExport + awsAuthRefresh with --login
+            if not hooks.get("awsCredentialExport"):
+                issues.append("IDC requires awsCredentialExport hook (silent credential refresh)")
+            auth_refresh = hooks.get("awsAuthRefresh", "")
+            if not auth_refresh:
+                issues.append("IDC requires awsAuthRefresh hook")
+            elif "--login" not in str(auth_refresh):
+                issues.append("IDC awsAuthRefresh should include --login flag")
+            # IDC should have launcher
+            launcher_name = "claude-bedrock.cmd" if sys.platform == "win32" else "claude-bedrock"
+            launcher_path = install_dir / launcher_name
+            if not launcher_path.exists():
+                issues.append(f"IDC launcher '{launcher_name}' not found (users need this to sign in)")
+        else:
+            # OIDC requires: awsAuthRefresh (without --login)
+            auth_refresh = hooks.get("awsAuthRefresh", "")
+            if not auth_refresh:
+                issues.append("OIDC requires awsAuthRefresh hook (credential refresh)")
+            elif "--login" in str(auth_refresh):
+                issues.append("OIDC awsAuthRefresh should NOT have --login (that's IDC-only)")
+            # OIDC should NOT have awsCredentialExport
+            if hooks.get("awsCredentialExport"):
+                issues.append("OIDC should not have awsCredentialExport (IDC-only hook)")
+
+        if issues:
+            check.fail("; ".join(issues), "Re-run 'ccwb package' and re-install")
+        else:
+            check.pass_(f"{auth_type.upper()} hooks correctly configured")
+        checks.append(check)
+
+        # ─── Monitoring architecture validation ───────────────────────────────
+        check = HealthCheck("monitoring-arch", "Monitoring setup matches config")
+        mon_issues = []
+
+        if config_mode == "dynamic":
+            # Bootstrap server delivers telemetry config — no local proxy needed
+            if has_endpoint:
+                mon_issues.append(
+                    "Dynamic config mode (bootstrap) but otel_collector_endpoint in config.json "
+                    "(proxy will spawn unnecessarily)"
+                )
+            check.pass_("Bootstrap server delivers telemetry (no local proxy needed)")
+        elif has_endpoint and monitoring_mode:
+            # Static mode with monitoring — proxy should be present
+            if monitoring_mode == "sidecar":
+                expected_port = 4319
+                check.pass_(f"Sidecar mode: proxy on :{expected_port} → otelcol on :4318")
+            else:
+                expected_port = 4318
+                check.pass_(f"Central mode: proxy on :{expected_port} → remote ALB")
+
+            # Verify otelHeadersHelper is configured (for Claude Code CLI)
+            if not hooks.get("otelHeadersHelper"):
+                mon_issues.append("otelHeadersHelper hook not set (CLI telemetry won't have identity)")
+        elif not has_endpoint and not monitoring_mode:
+            check.status = "skipped"
+            check.message = "Monitoring not configured"
+        else:
+            check.status = "skipped"
+            check.message = "Monitoring not configured"
+
+        if mon_issues:
+            check.warn("; ".join(mon_issues), "Re-run 'ccwb package' and re-install")
+        checks.append(check)
+
+        # ─── Profile consistency ──────────────────────────────────────────────
+        check = HealthCheck("profile-match", "AWS_PROFILE matches config.json")
+        aws_profile = env.get("AWS_PROFILE", "")
+        if aws_profile:
+            profile_names = [
+                k for k, v in profiles_data.items() if isinstance(v, dict)
+            ]
+            if aws_profile in profile_names:
+                check.pass_(f"AWS_PROFILE='{aws_profile}' found in config.json")
+            else:
+                check.fail(
+                    f"AWS_PROFILE='{aws_profile}' not in config.json profiles: {profile_names}",
+                    "Update AWS_PROFILE in settings.json or re-package",
+                )
+        else:
+            check.warn("AWS_PROFILE not set in settings.json env", "May use default profile")
+        checks.append(check)
+
     return checks
 
 
