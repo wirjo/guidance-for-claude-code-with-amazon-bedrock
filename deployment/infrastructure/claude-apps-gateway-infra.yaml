@@ -85,11 +85,29 @@ Parameters:
       Optional S3 bucket name for ALB access logs. When provided, enables
       access logging on the load balancer.
 
+  OtelCollectorEndpoint:
+    Type: String
+    Default: ''
+    Description: >-
+      OTLP HTTP endpoint for telemetry export to the CCWB monitoring stack
+      (e.g. http://otel-collector-alb.internal:4318). Gateway metrics appear
+      in the Claude Code dashboard alongside credential-helper users. Leave
+      empty to disable telemetry forwarding.
+
+  OtelAuthToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: >-
+      Bearer token for OTEL collector ALB authentication. Use the CoWork
+      service token from the monitoring stack. Leave empty for unauthenticated.
+
 Conditions:
   HasPrivateSubnets: !Not [!Equals [!Join ['', !Ref PrivateSubnetIds], '']]
   HasCertificate: !Not [!Equals [!Ref CertificateArn, '']]
   HasKmsKey: !Not [!Equals [!Ref LogsKmsKeyArn, '']]
   HasALBAccessLogs: !Not [!Equals [!Ref ALBAccessLogsBucket, '']]
+  HasTelemetryEndpoint: !Not [!Equals [!Ref OtelCollectorEndpoint, '']]
 
 Resources:
   # Security Groups
@@ -327,6 +345,20 @@ Resources:
               Value: gateway
             - Name: CLAUDE_GATEWAY_DB_USER
               Value: gateway
+            # Telemetry: export OTLP metrics to CCWB monitoring stack (Claude Code dashboard)
+            - Name: OTEL_EXPORTER_OTLP_ENDPOINT
+              Value: !Ref OtelCollectorEndpoint
+            - Name: OTEL_EXPORTER_OTLP_PROTOCOL
+              Value: http/protobuf
+            - Name: OTEL_EXPORTER_OTLP_HEADERS
+              Value: !If
+                - HasTelemetryEndpoint
+                - !Sub 'Authorization=Bearer ${OtelAuthToken}'
+                - ''
+            - Name: OTEL_SERVICE_NAME
+              Value: claude-code
+            - Name: OTEL_METRICS_EXPORTER
+              Value: !If [HasTelemetryEndpoint, otlp, none]
           Secrets:
             - Name: CLAUDE_GATEWAY_OIDC_CLIENT_SECRET
               ValueFrom: !Ref OidcClientSecretArn

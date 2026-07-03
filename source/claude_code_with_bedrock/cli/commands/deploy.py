@@ -1093,6 +1093,32 @@ class DeployCommand(Command):
                     f"BedrockRegion={profile.aws_region}",
                 ]
 
+                # Auto-derive OTEL collector endpoint from monitoring stack
+                # Gateway telemetry feeds the Claude Code dashboard (same namespace)
+                monitoring_stack = profile.stack_names.get("monitoring", f"{profile.identity_pool_name}-monitoring")
+                try:
+                    mon_outputs = get_stack_outputs(monitoring_stack, profile.aws_region)
+                    collector_endpoint = (mon_outputs or {}).get("CollectorEndpoint", "")
+                    if collector_endpoint:
+                        params.append(f"OtelCollectorEndpoint={collector_endpoint}")
+                        # Pass CoWork service token for ALB auth bypass
+                        service_token = getattr(profile, "cowork_service_token", "") or ""
+                        if service_token:
+                            params.append(f"OtelAuthToken={service_token}")
+                        console.print(
+                            f"[green]\u2713[/green] Telemetry: Gateway → {collector_endpoint} (Claude Code dashboard)"
+                        )
+                    else:
+                        console.print(
+                            "[dim]Telemetry: monitoring stack has no CollectorEndpoint — "
+                            "Gateway metrics won't appear in dashboards.[/dim]"
+                        )
+                except Exception:
+                    console.print(
+                        "[dim]Telemetry: could not query monitoring stack — "
+                        "Gateway deployed without telemetry forwarding.[/dim]"
+                    )
+
                 result = deploy_with_cf(
                     template,
                     stack_name,

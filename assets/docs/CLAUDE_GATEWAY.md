@@ -92,6 +92,26 @@ ccwb destroy gateway
 
 Removes the ECS service, RDS instance, ALB, and all associated resources. Does not affect other CCWB stacks.
 
+## Telemetry Integration
+
+When the CCWB monitoring stack is deployed, `ccwb deploy gateway` automatically connects the Gateway's OTLP export to the OTEL collector ALB. Gateway metrics appear in the **Claude Code dashboard** alongside credential-helper users — giving unified per-user visibility across both access methods.
+
+**How it works:**
+- `deploy.py` queries the monitoring stack's `CollectorEndpoint` output
+- Passes it as `OtelCollectorEndpoint` to the Gateway CFN template
+- The Gateway exports metrics with `service.name=claude-code` (same namespace)
+- User identity (`user.email`) is stamped from the Gateway's OIDC authentication
+
+**To disable:** Deploy with `OtelCollectorEndpoint=''` or destroy the monitoring stack. The Gateway runs fine without telemetry — it's purely additive.
+
+**Auth:** The Gateway uses the CoWork service token (same one Desktop uses) for ALB auth bypass. This is auto-derived from the profile during deploy.
+
+| User connects via | Telemetry path | Dashboard |
+|---|---|---|
+| Gateway (CLI) | Gateway → OTEL collector ALB | Claude Code dashboard |
+| Credential-helper (Desktop) | otel-helper → OTEL collector ALB | Claude Code dashboard |
+| Credential-helper (Desktop) | otel-helper → OTEL collector ALB | CoWork dashboard (also) |
+
 ## References
 
 - [Claude Apps Gateway docs](https://code.claude.com/docs/en/claude-apps-gateway)
